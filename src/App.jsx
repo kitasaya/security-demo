@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
 /**
  * セキュリティ体験ミニWebアプリ（単一ファイル）
@@ -56,6 +56,73 @@ function formatSecondsByLog10(log10Sec) {
   return `${y.toExponential(2)} 年`;
 }
 
+const WORK_KEYS = ["1", "2", "3"];
+const WORK_KEY_SET = new Set(WORK_KEYS);
+const DEFAULT_WORK_ID = "all";
+
+function getNormalizedBasePath() {
+  const base = import.meta.env.BASE_URL ?? "/";
+  const withoutTrailingSlash = base.endsWith("/") ? base.slice(0, -1) : base;
+  if (!withoutTrailingSlash) return "";
+  return withoutTrailingSlash.startsWith("/") ? withoutTrailingSlash : `/${withoutTrailingSlash}`;
+}
+
+function stripBaseFromPath(pathname) {
+  const normalizedBase = getNormalizedBasePath();
+  if (!normalizedBase) return pathname.replace(/^\/+/, "");
+  if (pathname.startsWith(normalizedBase)) {
+    const remainder = pathname.slice(normalizedBase.length);
+    return remainder.replace(/^\/+/, "");
+  }
+  return pathname.replace(/^\/+/, "");
+}
+
+function parseWorkId(pathname) {
+  if (!pathname) return DEFAULT_WORK_ID;
+  const remainder = stripBaseFromPath(pathname);
+  if (!remainder) return DEFAULT_WORK_ID;
+  const [firstSegment] = remainder.split("/").filter(Boolean);
+  if (firstSegment && WORK_KEY_SET.has(firstSegment)) return firstSegment;
+  return DEFAULT_WORK_ID;
+}
+
+function buildPathFromWorkId(workId) {
+  const normalizedBase = getNormalizedBasePath();
+  if (workId === DEFAULT_WORK_ID) return normalizedBase || "/";
+  const prefix = normalizedBase || "";
+  return `${prefix}/${workId}`;
+}
+
+function useWorkRoute(defaultWorkId = DEFAULT_WORK_ID) {
+  const getInitial = () => {
+    if (typeof window === "undefined") return defaultWorkId;
+    return parseWorkId(window.location.pathname);
+  };
+  const [workId, setWorkId] = useState(getInitial);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handlePopstate = () => {
+      setWorkId(parseWorkId(window.location.pathname));
+    };
+    window.addEventListener("popstate", handlePopstate);
+    return () => {
+      window.removeEventListener("popstate", handlePopstate);
+    };
+  }, []);
+
+  const navigate = (nextId) => {
+    if (typeof window === "undefined") return;
+    const normalized = WORK_KEY_SET.has(nextId) ? nextId : DEFAULT_WORK_ID;
+    const nextPath = buildPathFromWorkId(normalized);
+    if (window.location.pathname !== nextPath) {
+      window.history.pushState({}, "", nextPath);
+    }
+    setWorkId(normalized);
+  };
+
+  return [workId, navigate];
+}
+
 // ---------- ワーク①: 通り数トレーナー ----------
 function WorkPasswordCombinations() {
   const [charset, setCharset] = useState(62);
@@ -66,7 +133,10 @@ function WorkPasswordCombinations() {
     { label: "10億/秒（10^9/s）", log10: 9 },
   ];
   return (
-    <Card title="ワーク①: パスワードの通り数（暗算で桁感）" footer={<div className="text-sm text-gray-500">ポイント: <b>長さ × 管理 × 2要素(MFA)</b> が再現性のある強さ。</div>}>
+    <Card
+      title="ワーク①: パスワードの通り数（暗算で桁感）"
+      footer={<div className="text-sm text-gray-500">ポイント: <b>長さ × 管理 × 2要素(MFA)</b> が再現性のある強さ。</div>}
+    >
       <div className="grid md:grid-cols-2 gap-4">
         <div className="space-y-3">
           <label className="block">
@@ -255,24 +325,89 @@ function WorkRSALab(){
   );
 }
 
+const WORK_SECTIONS = [
+  {
+    id: "1",
+    navLabel: "ワーク①",
+    title: "ワーク①: パスワード組み合わせ",
+    subtitle: "“短く複雑”より“長く覚えやすい”。10の何乗で直感を掴む。",
+    Component: WorkPasswordCombinations,
+  },
+  {
+    id: "2",
+    navLabel: "ワーク②",
+    title: "ワーク②: 攻撃シミュレーター",
+    subtitle: "架空アカウント×攻撃手法。成否と“なぜ”を即時フィードバック。",
+    Component: WorkAttackSim,
+  },
+  {
+    id: "3",
+    navLabel: "ワーク③",
+    title: "ワーク③: RSAを解く計算をしよう",
+    subtitle: "与えられる数字を減らしながら、RSAの“難しさ”を体感。",
+    Component: WorkRSALab,
+  },
+];
+
 // ---------- ルート ----------
 export default function App(){
+  const [activeWorkId, navigate] = useWorkRoute(DEFAULT_WORK_ID);
+  const activeWork = WORK_SECTIONS.find((work) => work.id === activeWorkId);
+  const ActiveWorkComponent = activeWork?.Component;
+
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900">
       <header className="max-w-6xl mx-auto px-4 py-6">
         <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight">セキュリティ体験ハンズオン</h1>
         <p className="text-gray-600 mt-1">30分発表用: 体験→理解→持ち帰り をこの1画面で。実データは一切使いません。</p>
+        <nav className="mt-4 flex flex-wrap gap-2 text-sm">
+          {[
+            { id: DEFAULT_WORK_ID, label: "全ワーク" },
+            ...WORK_SECTIONS.map(({ id, navLabel }) => ({ id, label: navLabel })),
+          ].map((item) => {
+            const isActive = activeWorkId === item.id;
+            return (
+              <button
+                key={item.id}
+                className={`px-3 py-1.5 rounded-full border ${
+                  isActive ? "bg-black text-white border-black" : "bg-white border-gray-300 text-gray-700"
+                }`}
+                onClick={() => navigate(item.id)}
+                type="button"
+              >
+                {item.label}
+              </button>
+            );
+          })}
+        </nav>
       </header>
       <main className="max-w-6xl mx-auto px-4 pb-12 space-y-8">
-        <Section title="ワーク①: パスワード通り数 感覚トレーナー" subtitle="“短く複雑”より“長く覚えやすい”。10の何乗で直感を掴む。">
-          <WorkPasswordCombinations />
-        </Section>
-        <Section title="ワーク②: 攻撃シミュレーター" subtitle="架空アカウント×攻撃手法。成否と“なぜ”を即時フィードバック。">
-          <WorkAttackSim />
-        </Section>
-        <Section title="ワーク③: RSAラボ" subtitle="与えられる数字を減らしながら、RSAの“難しさ”を体感。">
-          <WorkRSALab />
-        </Section>
+        {activeWorkId === DEFAULT_WORK_ID && WORK_SECTIONS.map(({ id, title, subtitle, Component }) => (
+          <Section key={id} title={title} subtitle={subtitle}>
+            <Component />
+          </Section>
+        ))}
+        {activeWorkId !== DEFAULT_WORK_ID && ActiveWorkComponent && (
+          <Section title={activeWork.title} subtitle={activeWork.subtitle}>
+            <ActiveWorkComponent />
+          </Section>
+        )}
+        {activeWorkId !== DEFAULT_WORK_ID && !activeWork && (
+          <Section title="指定されたワークが見つかりません" subtitle="URL を確認するか、全ワークに戻ってください。">
+            <Card>
+              <div className="space-y-2 text-sm">
+                <p>指定された URL に対応するワークがありません。</p>
+                <button
+                  type="button"
+                  onClick={() => navigate(DEFAULT_WORK_ID)}
+                  className="px-4 py-2 rounded-xl bg-black text-white"
+                >
+                  全ワークに戻る
+                </button>
+              </div>
+            </Card>
+          </Section>
+        )}
       </main>
       <footer className="max-w-6xl mx-auto px-4 pb-10 text-xs text-gray-500">© 2025 体験重視セキュリティワーク. 教育目的のデモ。実サービス・実パスワードの入力は行いません。</footer>
     </div>
